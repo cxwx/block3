@@ -6,6 +6,5 @@ __pycache__/
 *.pyc
 /cowrie2deny.py
 /plot_map.py
-/blocklist.dat
 /attack_map.html
 /data/
