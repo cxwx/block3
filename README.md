@@ -1,3 +1,7 @@
+<!-- ATTACK_MAP_START -->
+<img src="attack_map.svg" width="800">
+<!-- ATTACK_MAP_END -->
+
 # IP Blocklist
 
 Attackers IP list collected.
