@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - blocklist.dat
+  workflow_dispatch:
 
 permissions:
   contents: write
