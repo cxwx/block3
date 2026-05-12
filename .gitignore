@@ -1,0 +1,7 @@
+/.claude
+/cowrie.json
+/sh1_cp.sh
+/whiteiplist.dat
+__pycache__/
+*.pyc
+/cowrie2deny.py
