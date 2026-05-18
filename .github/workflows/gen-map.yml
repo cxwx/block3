@@ -19,33 +19,85 @@ jobs:
         with:
           python-version: "3.x"
 
-      - run: pip install requests matplotlib geopandas
+      - run: pip install matplotlib geopandas
 
       - run: |
           wget -q -O /tmp/ne.zip "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
           unzip -q /tmp/ne.zip -d /tmp/ne
 
-      - name: Generate SVG
+      - name: Geolocate IPs (batch via ip-api.com)
         run: |
           python3 << 'PYEOF'
-          import requests, matplotlib
-          matplotlib.use("Agg")
-          import matplotlib.pyplot as plt
-          import geopandas as gpd
+          import json, subprocess, time, sys
+
+          BATCH_URL = "http://ip-api.com/batch"
+          BATCH_SIZE = 50
 
           with open("blocklist.dat") as f:
               ips = [l.strip() for l in f if l.strip()]
 
-          print(f"Geolocating {len(ips)} IPs...")
-          locs = []
-          for ip in ips:
-              try:
-                  d = requests.get(f"https://ipwho.is/{ip}", timeout=10).json()
-                  if d.get("success"):
-                      locs.append((d["longitude"], d["latitude"]))
-                      print(f"  {ip} -> {d['country']}")
-              except Exception as e:
-                  print(f"  {ip} -> {e}")
+          # Load cache
+          cache = {}
+          try:
+              with open(".ip_geo_cache.json") as f:
+                  for entry in json.load(f):
+                      cache[entry["ip"]] = entry
+          except (FileNotFoundError, json.JSONDecodeError):
+              pass
+
+          results = {ip: cache[ip] for ip in ips if ip in cache}
+          uncached = [ip for ip in ips if ip not in cache]
+
+          for i in range(0, len(uncached), BATCH_SIZE):
+              chunk = uncached[i:i + BATCH_SIZE]
+              print(f"Batch {i // BATCH_SIZE + 1}: querying {len(chunk)} IPs...", file=sys.stderr)
+
+              payload = json.dumps(chunk)
+              cmd = ["curl", "-s", "--max-time", "30", "-X", "POST", BATCH_URL,
+                     "-H", "Content-Type: application/json", "-d", payload]
+
+              data = []
+              for attempt in range(3):
+                  r = subprocess.run(cmd, capture_output=True, text=True)
+                  try:
+                      data = json.loads(r.stdout)
+                      if data and all(d.get("status") == "success" for d in data):
+                          break
+                  except json.JSONDecodeError:
+                      pass
+                  if attempt < 2:
+                      time.sleep(3 * (attempt + 1))
+
+              for entry in data:
+                  ip = entry.get("query", "")
+                  if entry.get("status") == "success":
+                      results[ip] = {
+                          "ip": ip,
+                          "country": entry.get("country", "Unknown"),
+                          "lat": entry.get("lat", 0),
+                          "lon": entry.get("lon", 0),
+                      }
+              time.sleep(2)
+
+          # Save cache
+          with open(".ip_geo_cache.json", "w") as f:
+              json.dump(list(results.values()), f)
+
+          print(f"Geolocated {len(results)} IPs.")
+          PYEOF
+
+      - name: Generate SVG
+        run: |
+          python3 << 'PYEOF'
+          import json, matplotlib
+          matplotlib.use("Agg")
+          import matplotlib.pyplot as plt
+          import geopandas as gpd
+
+          with open(".ip_geo_cache.json") as f:
+              locations = json.load(f)
+
+          locs = [(loc["lon"], loc["lat"]) for loc in locations]
 
           world = gpd.read_file("/tmp/ne/ne_110m_admin_0_countries.shp")
           fig, ax = plt.subplots(figsize=(14, 7))
@@ -57,13 +109,41 @@ jobs:
           fig.tight_layout(pad=0.5)
           fig.savefig("attack_map.svg", format="svg", bbox_inches="tight")
           plt.close(fig)
-          print("Done.")
+          print("SVG generated.")
+          PYEOF
+
+      - name: Update README
+        run: |
+          python3 << 'PYEOF'
+          import re, os
+
+          readme = "README.md"
+          if not os.path.exists(readme):
+              exit(0)
+          with open(readme) as f:
+              content = f.read()
+
+          marker_start = "<!-- ATTACK_MAP_START -->"
+          marker_end = "<!-- ATTACK_MAP_END -->"
+          block = f"{marker_start}\n<img src=\"attack_map.svg\" width=\"800\">\n{marker_end}"
+
+          if marker_start in content:
+              content = re.sub(
+                  f"{re.escape(marker_start)}.*?{re.escape(marker_end)}",
+                  block, content, flags=re.DOTALL
+              )
+          else:
+              content = block + "\n\n" + content
+
+          with open(readme, "w") as f:
+              f.write(content)
+          print("README updated.")
           PYEOF
 
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add attack_map.svg
+          git add attack_map.svg .ip_geo_cache.json
           git diff --cached --quiet || git commit -m "Update attack map"
           git push
