@@ -9,3 +9,8 @@ __pycache__/
 /attack_map.html
 /data/
 /cowrie
+/.ip_geo_cache.json
+/attack_map.png
+/geo_ip.py
+/plot_geo.py
+/geo_data.json
